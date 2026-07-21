@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@ecoacoustics/web-components": "^6.4.0"
+  }
+}

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>海豚哨声自动分析系统</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;background:#0a0a1a;color:#c8d0e0;height:100vh;display:flex;flex-direction:column}
+.nav{background:#0f0f2a;border-bottom:1px solid #1e2a40;padding:0 18px;height:44px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.nav .logo{font-size:16px;font-weight:700;color:#2196F3}
+.layout{display:flex;flex:1;overflow:hidden}
+.side{width:300px;min-width:260px;background:#0f0f2a;border-right:1px solid #1e2a40;padding:14px;overflow-y:auto}
+.side h3{font-size:10px;color:#6a7a90;text-transform:uppercase;margin-bottom:8px;letter-spacing:1px}
+.btn{display:block;width:100%;padding:8px;margin:6px 0;background:#2196F3;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
+.btn:hover{background:#1976D2}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-sm{padding:5px 10px;font-size:11px;background:transparent;color:#c8d0e0;border:1px solid #1e2a40;border-radius:3px;cursor:pointer}
+.btn-sm:hover{border-color:#2196F3;color:#2196F3}
+#list{margin-top:8px;font-size:12px}
+#list .item{padding:6px 8px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04);display:flex;align-items:center;gap:8px}
+#list .item:hover{background:rgba(255,255,255,.03)}
+#list .item.sel{background:rgba(244,67,54,.12);border-left:3px solid #f44336}
+#list .item .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+#list .item .meta{margin-left:auto;color:#6a7a90;font-size:10px}
+.main{flex:1;display:flex;flex-direction:column;background:#000;overflow:hidden}
+.tbar{background:#0f0f2a;border-bottom:1px solid #1e2a40;padding:4px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#specWrap{flex:1;overflow:auto;position:relative;display:flex;align-items:flex-start;justify-content:center;background:#0a0a1a}
+#specInner{position:relative;display:inline-block;flex-shrink:0}
+#specImg{display:block;max-width:none}
+/* Box overlay */
+.sbox{position:absolute;border:2px solid rgba(255,255,255,.4);border-radius:3px;cursor:pointer;transition:all .15s;z-index:10}
+.sbox:hover{border-color:#ff9800;border-width:3px;z-index:20}
+.sbox.sel{border:3px solid #f44336!important;box-shadow:0 0 16px rgba(244,67,54,.6);z-index:30;background:rgba(244,67,54,.08)}
+.sbox .slbl{position:absolute;top:-22px;left:0;font-size:10px;font-weight:700;color:#fff;padding:2px 7px;border-radius:3px;white-space:nowrap;pointer-events:none}
+.sbox.sel .slbl{background:#f44336!important}
+.detail{width:300px;min-width:260px;background:#141430;border-left:1px solid #1e2a40;padding:14px;overflow-y:auto}
+.detail h3{font-size:10px;color:#2196F3;text-transform:uppercase;margin:8px 0 4px}
+.detail .row{display:flex;justify-content:space-between;padding:3px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,.02)}
+.detail .row .k{color:#6a7a90}
+.detail .row .v{font-weight:600}
+.loading{position:absolute;inset:0;background:rgba(10,10,26,.85);z-index:50;display:none;align-items:center;justify-content:center;font-size:14px;flex-direction:column;gap:8px}
+.chip{display:inline-block;font-size:10px;padding:2px 8px;border-radius:8px;background:rgba(255,255,255,.04);margin:2px;font-weight:600}
+.ph{display:flex;align-items:center;justify-content:center;height:100%;color:#6a7a90;font-size:14px}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <span class="logo">🐬 Dolphin Whistle Analyzer</span>
+  <span style="font-size:10px;color:#6a7a90">| Raven Pro Style Spectrogram | 6-Type Classifier | 17 Parameters</span>
+</div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <div class="side">
+    <h3>📂 Upload WAV File</h3>
+    <input type="file" id="fileInput" accept=".wav" style="width:100%;font-size:12px;color:#c8d0e0;margin-bottom:8px">
+    <button class="btn" id="analyzeBtn" disabled>🔍 Analyze</button>
+    <div id="msg" style="font-size:11px;color:#2196F3;margin:6px 0;word-break:break-all"></div>
+    <hr style="border-color:#1e2a40;margin:10px 0">
+    <h3>📋 Detected Whistles (<span id="cnt">0</span>)</h3>
+    <div id="stats" style="margin-bottom:4px"></div>
+    <div id="list"></div>
+    <hr style="border-color:#1e2a40;margin:10px 0">
+    <button class="btn-sm" id="exportBtn" disabled style="width:100%">📥 Export CSV</button>
+  </div>
+
+  <!-- SPECTROGRAM -->
+  <div class="main">
+    <div class="tbar">
+      <span style="font-size:10px;color:#6a7a90">Spectrogram</span>
+      <span style="color:#6a7a90;font-size:9px">|</span>
+      <button class="btn-sm" id="toggleBtn">🖼️ Annotated / Clean</button>
+      <span style="font-size:10px;color:#6a7a90;margin-left:auto">💡 Click on boxes to view parameters</span>
+    </div>
+    <div id="specWrap">
+      <div class="ph" id="emptyHint">🐬 Upload a WAV file and click Analyze</div>
+      <div id="specInner" style="display:none">
+        <img id="specImg" src="" alt="Spectrogram" draggable="false">
+        <div id="boxesLayer"></div>
+      </div>
+    </div>
+    <div class="loading" id="loading"><div style="font-size:32px;animation:spin .8s linear infinite;width:32px;height:32px;border:3px solid #1e2a40;border-top-color:#2196F3;border-radius:50%"></div>Analyzing…</div>
+  </div>
+
+  <!-- DETAIL -->
+  <div class="detail" id="detail">
+    <div style="color:#6a7a90;font-size:13px">← Select a whistle to view 17 parameters</div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const S={file:null,results:null,jobId:null,activeIdx:-1,showAnnotated:false,meta:null};
+
+// File select
+$('fileInput').addEventListener('change',()=>{
+  const f=$('fileInput').files[0];
+  if(!f)return;
+  if(!f.name.toLowerCase().endsWith('.wav')){alert('Only .wav files');return}
+  S.file=f;$('analyzeBtn').disabled=false;$('msg').textContent='✅ '+f.name+' ('+fmt(f.size)+')';
+});
+
+// Analyze
+$('analyzeBtn').addEventListener('click',async()=>{
+  if(!S.file)return;
+  $('loading').style.display='flex';$('analyzeBtn').disabled=true;
+  const fd=new FormData();fd.append('file',S.file);fd.append('threshold','-115');fd.append('min_freq','1000');fd.append('max_freq','50000');
+  try{
+    const r=await fetch('/api/analyze',{method:'POST',body:fd});const d=await r.json();
+    if(d.error){alert(d.error);$('loading').style.display='none';$('analyzeBtn').disabled=false;return}
+    S.results=d.results;S.jobId=d.wav_name+'_'+d.job_id;
+    S.meta={fMin:d.f_min,fMax:d.f_max,tMin:d.t_min,tMax:d.t_max};
+    $('msg').textContent='✅ '+d.results.length+' whistles detected';
+    showSpectrogram(d);
+    $('exportBtn').disabled=false;
+  }catch(e){alert('Error: '+e.message)}
+  $('loading').style.display='none';$('analyzeBtn').disabled=false;
+});
+
+// Show spectrogram image
+function showSpectrogram(d){
+  $('emptyHint').style.display='none';
+  $('specInner').style.display='inline-block';
+
+  const url=S.showAnnotated?d.annotated_url:d.spectrogram_url;
+  $('specImg').src=url+'?t='+Date.now();
+  $('specImg').onload=()=>{
+    renderBoxes();
+    renderList();
+    if(S.results.length>0)select(0);
+  };
+}
+
+// Render interactive boxes
+function renderBoxes(){
+  $('boxesLayer').innerHTML='';
+  const img=$('specImg'),iw=img.naturalWidth||img.width,ih=img.naturalHeight||img.height;
+  if(!iw||!ih)return;
+
+  const fMin=S.meta?.fMin||1000,fMax=Math.min(S.meta?.fMax||50000,50000);
+  const tMin=S.meta?.tMin||0,tMax=S.meta?.tMax||Math.max(...S.results.map(r=>r.end_time),1);
+
+  S.results.forEach((r,i)=>{
+    const mT=.005,mF=150;
+    const left=((r.start_time-mT-tMin)/(tMax-tMin))*iw;
+    const width=((r.end_time-r.start_time+2*mT)/(tMax-tMin))*iw;
+    const top=((fMax-(r.max_freq_hz+mF))/(fMax-fMin))*ih;
+    const height=((r.max_freq_hz-r.min_freq_hz+2*mF)/(fMax-fMin))*ih;
+
+    const box=document.createElement('div');
+    box.className='sbox'+(i===S.activeIdx?' sel':'');
+    box.style.left=Math.max(0,left)+'px';
+    box.style.top=Math.max(0,top)+'px';
+    box.style.width=Math.max(6,width)+'px';
+    box.style.height=Math.max(6,Math.min(height,ih-top))+'px';
+    box.dataset.idx=i;
+
+    const lbl=document.createElement('div');
+    lbl.className='slbl';
+    lbl.style.background=r.color;
+    lbl.textContent='#'+r.id+' '+r.type;
+    box.appendChild(lbl);
+
+    box.addEventListener('click',e=>{e.stopPropagation();select(i);});
+
+    $('boxesLayer').appendChild(box);
+  });
+}
+
+// Select whistle
+function select(i){
+  S.activeIdx=i;const r=S.results[i];if(!r)return;
+  // Update box highlights
+  document.querySelectorAll('.sbox').forEach((el,j)=>{el.classList.toggle('sel',j===i)});
+  // Update list
+  document.querySelectorAll('#list .item').forEach(el=>el.classList.remove('sel'));
+  const items=document.querySelectorAll('#list .item');if(items[i])items[i].classList.add('sel');
+  // Update detail
+  const p=r.params||{},sn=v=>({'-1':'Down','0':'Flat','1':'Rise'}[String(v)]||v);
+  $('detail').innerHTML=
+    `<h3>🐬 Whistle #${r.id}</h3>
+    <div style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:700;color:#fff;background:${r.color};margin:4px 0">${r.type} (${r.type_cn})</div>
+    <div style="font-size:10px;color:#6a7a90;margin:4px 0">${r.start_time.toFixed(3)}s — ${r.end_time.toFixed(3)}s | ${r.duration_ms.toFixed(1)}ms</div>
+    <h3>📈 Frequency Parameters</h3>${pr('BF','Begin Freq',p.BF,'Hz')}${pr('Ft0.25','Freq at 1/4',p['Ft0.25'],'Hz')}${pr('Ft0.5','Freq at 1/2',p['Ft0.5'],'Hz')}${pr('Ft0.75','Freq at 3/4',p['Ft0.75'],'Hz')}${pr('EF','End Freq',p.EF,'Hz')}${pr('MinF','Min Freq',p.MinF,'Hz')}${pr('MaxF','Max Freq',p.MaxF,'Hz')}${pr('ΔF','Delta Freq',p.DeltaF,'Hz')}${pr('MeF','Mean Freq',p.MeF,'Hz')}
+    <h3>⏱️ Temporal & Qualitative</h3>${pr('Dur','Duration',p.Dur,'ms')}${pr('BS','Begin Sweep',sn(p.BS),'')}${pr('ES','End Sweep',sn(p.ES),'')}${pr('NoIP','Inflexion Pts',p.NoIP,'')}${pr('NoG','Gaps',p.NoG,'')}${pr('NoS','Stairs',p.NoS,'')}
+    <h3>🔊 Harmonics</h3>${pr('NoH','Harmonics',p.NoH,'')}${pr('MFH','Max Harmonic F',p.MFH,'Hz')}`;
+}
+function pr(k,n,v,u){const x=v!=null?Number(v).toFixed(2):'N/A';return`<div class="row"><span class="k">${k} <span style="font-size:9px;opacity:.6">${n}</span></span><span class="v">${x}${u?' '+u:''}</span></div>`}
+
+// List
+function renderList(){
+  $('cnt').textContent=S.results.length;
+  const cols={Flat:'#2196F3',Down:'#FF5722',Rise:'#4CAF50',Convex:'#9C27B0','U-shaped':'#FF9800',Sine:'#E91E63'};
+  const cnt={};S.results.forEach(r=>{cnt[r.type]=(cnt[r.type]||0)+1});
+  $('stats').innerHTML=['Flat','Down','Rise','Convex','U-shaped','Sine'].filter(t=>cnt[t]).map(t=>`<span class="chip" style="border-left:2px solid ${cols[t]}">${cnt[t]} ${t}</span>`).join('');
+  $('list').innerHTML=S.results.map((r,i)=>`<div class="item" onclick="window._sel(${i})"><span class="dot" style="background:${r.color}"></span><span style="font-weight:700">#${r.id}</span> ${r.type}<span class="meta">${r.duration_ms.toFixed(0)}ms</span></div>`).join('');
+}
+window._sel=i=>select(i);
+
+// Toggle annotated/clean
+$('toggleBtn').addEventListener('click',()=>{
+  S.showAnnotated=!S.showAnnotated;
+  $('toggleBtn').textContent=S.showAnnotated?'🖼️ Annotated (click for clean)':'🖼️ Clean (click for annotated)';
+  if(S.jobId){
+    const base=S.showAnnotated?'/static/annotated/':'/static/spectrogram/';
+    $('specImg').src=base+S.jobId+'?t='+Date.now();
+    $('specImg').onload=()=>{
+      if(!S.showAnnotated)renderBoxes();else $('boxesLayer').innerHTML='';
+    };
+  }
+});
+
+// Export
+$('exportBtn').addEventListener('click',()=>{
+  if(!S.results)return;
+  const h=['ID,Type,Type_CN,Start_s,End_s,Dur_ms,MinF_Hz,MaxF_Hz,BF,EF,NoIP,NoH,MFH'];
+  S.results.forEach(r=>{const p=r.params||{};h.push([r.id,r.type,r.type_cn,r.start_time.toFixed(4),r.end_time.toFixed(4),r.duration_ms.toFixed(1),r.min_freq_hz.toFixed(0),r.max_freq_hz.toFixed(0),p.BF||'',p.EF||'',p.NoIP||'',p.NoH||'',p.MFH||''].join(','))});
+  const b=new Blob(['﻿'+h.join('\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='whistles.csv';a.click();
+});
+
+function fmt(b){return b<1024?b+'B':b<1048576?(b/1024).toFixed(1)+'KB':(b/1048576).toFixed(1)+'MB'}
+</script>
+</body>
+</html>

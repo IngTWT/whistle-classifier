@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+outputs/
+uploads/
+training_data/samples/*
+*.h5
+.DS_Store
+*.log

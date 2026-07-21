@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test</title>
+<style>body{background:#0a0a1a;margin:10px;color:#fff;font-family:sans-serif}img{display:block;max-width:100%;margin:10px 0}button,input{margin:6px 0;padding:6px;font-size:13px}</style></head>
+<body>
+<h3>Pure Spectrogram Test</h3>
+<p>1. Select WAV file</p>
+<input type="file" id="f" accept=".wav"><br>
+<button id="go">2. Analyze</button>
+<div id="out" style="color:#4caf50;margin:8px 0"></div>
+<div id="err" style="color:#f44336"></div>
+<div id="img"></div>
+<script>
+document.getElementById('go').onclick = async function(){
+  var out = document.getElementById('out');
+  var err = document.getElementById('err');
+  var img = document.getElementById('img');
+  out.textContent = 'Uploading...';
+  err.textContent = '';
+  img.innerHTML = '';
+
+  var fileInput = document.getElementById('f');
+  if (!fileInput.files[0]) { err.textContent = 'No file selected'; return; }
+
+  try {
+    var fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    fd.append('threshold', '-115');
+    fd.append('min_freq', '1000');
+    fd.append('max_freq', '50000');
+
+    var r = await fetch('/api/analyze', {method: 'POST', body: fd});
+    var d = await r.json();
+
+    if (d.error) { err.textContent = 'ERROR: ' + d.error; return; }
+
+    out.textContent = 'OK! Found ' + d.results.length + ' whistles';
+    img.innerHTML = '<p>Spectrogram:</p><img src="'+d.spectrogram_url+'"><p>Annotated:</p><img src="'+d.annotated_url+'">';
+  } catch(e) {
+    err.textContent = 'EXCEPTION: ' + e.message;
+  }
+};
+</script>
+</body></html>
