@@ -22,6 +22,25 @@ from run_pipeline import (
 )
 from whistle_classifier import classify_whistle, TYPE_NAMES, TYPE_NAMES_CN
 from parameter_calculator import calculate_all_parameters
+from logger import log_analysis, get_summary, export_log_summary
+
+# ═══════════════════════════════════════════════════════════
+#  论文 Table II 合理范围（用于异常检测）
+# ═══════════════════════════════════════════════════════════
+PAPER_RANGES = {
+    'Dur':    (29, 2923),       # ms
+    'BF':     (470, 24380),     # Hz
+    'EF':     (560, 25000),     # Hz
+    'MinF':   (520, 21190),     # Hz
+    'MaxF':   (560, 33000),     # Hz
+    'DeltaF': (0, 21250),       # Hz
+    'MeF':    (530, 24000),     # Hz
+    'NoIP':   (0, 9),
+    'NoG':    (0, 5),
+    'NoS':    (0, 5),
+    'NoH':    (0, 19),
+    'MFH':    (0, 96000),       # Hz
+}
 
 # ═══════════════════════════════════════════════════════════
 #  双语文本字典
@@ -85,6 +104,12 @@ T = {
         'correct_new': '✏️ 修正为新值',
         'correct_save': '💾 保存修正',
         'verify_title': '🔬 模型验证报告',
+        'filter_all': '全部',
+        'filter_low': '低置信度',
+        'filter_anomaly': '异常值',
+        'filter_unreviewed': '待复核',
+        'mark_reviewed': '✓ 标记已复核',
+        'mark_unreviewed': '○ 取消已复核',
         'correct_cancel': '取消',
         'acc_no_gt': '未导入 Ground Truth，无法计算准确率。\n请点击"📋 导入 Ground Truth"加载 Raven Pro 手动标注文件。',
         'file_filter': 'WAV 文件',
@@ -149,6 +174,12 @@ T = {
         'correct_new': '✏️ Correct To',
         'correct_save': '💾 Save Correction',
         'verify_title': '🔬 Model Verification Report',
+        'filter_all': 'All',
+        'filter_low': 'Low Confidence',
+        'filter_anomaly': 'Anomalies',
+        'filter_unreviewed': 'Unreviewed',
+        'mark_reviewed': '✓ Mark Reviewed',
+        'mark_unreviewed': '○ Unmark Reviewed',
         'correct_cancel': 'Cancel',
         'acc_no_gt': 'No Ground Truth loaded. Accuracy cannot be calculated.\nClick "📋 Import Ground Truth" to load a Raven Pro manual annotation file.',
         'file_filter': 'WAV files',
@@ -331,6 +362,16 @@ class DolphinWhistleApp:
         self._export_csv_btn = ttk.Button(btn_row, text='', command=self._export_csv)
         self._export_csv_btn.pack(side='left', padx=4)
 
+        # 筛选器
+        self._filter_var = tk.StringVar(value='all')
+        self._filter_combo = ttk.Combobox(btn_row, textvariable=self._filter_var, width=16,
+                                          values=['all', 'low_conf', 'anomaly', 'unreviewed'],
+                                          state='readonly', font=('Microsoft YaHei', 10))
+        self._filter_combo.pack(side='right', padx=4)
+        self._filter_combo.bind('<<ComboboxSelected>>', lambda e: self._refresh_table())
+        self._filter_lbl = ttk.Label(btn_row, text='')
+        self._filter_lbl.pack(side='right')
+
         # 进度条
         self._progress = ttk.Progressbar(btn_row, mode='indeterminate', length=120)
         self._progress.pack(side='right', padx=(8, 0))
@@ -376,6 +417,11 @@ class DolphinWhistleApp:
         self._accuracy_btn.config(text=txt('accuracy'))
         self._export_sel_btn.config(text=txt('export_sel'))
         self._export_csv_btn.config(text=txt('export_csv'))
+        self._filter_lbl.config(text='| ⚠️? ✏️?')
+        self._filter_combo.config(values=[
+            txt('filter_all'), txt('filter_low'), txt('filter_anomaly'), txt('filter_unreviewed'),
+        ])
+        self._filter_var.set(txt('filter_all'))
         self._exp_path_lbl.config(text=txt('export_path') + ':')
         self._exp_browse_btn.config(text=txt('browse'))
 
@@ -565,32 +611,24 @@ class DolphinWhistleApp:
         self._analyze_btn.config(text=txt('analyze'), command=self._start_analysis)
         self.results = results
 
-        # 填充表格
-        self._tree.delete(*self._tree.get_children())
+        # 对每个结果做异常检测 + 初始化复核状态
         for r in results:
-            conf = r.get('confidence', 1.0)
-            tags = []
-            if conf < 0.4:
-                tags.append('low_conf')
-            elif conf < 0.6:
-                tags.append('med_conf')
+            r['anomalies'] = _check_anomalies(r)
+            r['reviewed'] = False
 
-            self._tree.insert('', 'end', values=(
-                r.get('file', ''),
-                r['id'],
-                r['type'],
-                f"{r['start_time']:.3f}",
-                f"{r['end_time']:.3f}",
-                f"{r['duration_ms']:.1f}",
-                f"{conf:.2f}",
-                f"{r['min_freq_hz']:.0f}",
-                f"{r['max_freq_hz']:.0f}",
-            ), tags=tags)
+        # 记录日志
+        try:
+            log_analysis(
+                self._path_var.get(),
+                {'threshold': float(self._thresh_var.get() or -115),
+                 'min_freq': float(self._fmin_var.get() or 1000),
+                 'max_freq': float(self._fmax_var.get() or 50000)},
+                results,
+            )
+        except Exception:
+            pass
 
-        # 置信度标签颜色
-        self._tree.tag_configure('low_conf', background='#4a2020')
-        self._tree.tag_configure('med_conf', background='#4a4020')
-
+        self._refresh_table()
         self._update_status()
 
     def _update_status(self):
@@ -634,7 +672,25 @@ class DolphinWhistleApp:
                          command=lambda: self._show_detail(idx))
         menu.add_separator()
         menu.add_command(label=txt('correct_btn'), command=lambda: self._show_correction_dialog(idx))
+        menu.add_separator()
+        r = self.results[idx]
+        if not r.get('reviewed', False):
+            menu.add_command(label=txt('mark_reviewed'), command=lambda: self._mark_reviewed(idx))
+        else:
+            menu.add_command(label=txt('mark_unreviewed'), command=lambda: self._mark_unreviewed(idx))
+        if r.get('anomalies'):
+            menu.add_separator()
+            for a in r['anomalies']:
+                menu.add_command(label=f'⚠️ {a}', state='disabled')
         menu.post(event.x_root, event.y_root)
+
+    def _mark_reviewed(self, idx):
+        self.results[idx]['reviewed'] = True
+        self._refresh_table()
+
+    def _mark_unreviewed(self, idx):
+        self.results[idx]['reviewed'] = False
+        self._refresh_table()
 
     def _show_detail(self, idx):
         r = self.results[idx]
@@ -832,28 +888,69 @@ class DolphinWhistleApp:
         ttk.Button(btn_frame, text=txt('correct_cancel'), command=win.destroy).pack(side='left', padx=4)
 
     def _refresh_table(self):
-        """刷新表格内容"""
+        """刷新表格内容（含筛选、异常、复核状态）"""
         self._tree.delete(*self._tree.get_children())
-        for r in self.results:
+        # 翻译后的筛选值 → 内部key
+        filter_trans = {
+            txt('filter_all'): 'all', txt('filter_low'): 'low_conf',
+            txt('filter_anomaly'): 'anomaly', txt('filter_unreviewed'): 'unreviewed',
+        }
+        filter_mode = filter_trans.get(self._filter_var.get(), 'all')
+
+        for idx, r in enumerate(self.results):
             conf = r.get('confidence', 1.0)
+            has_anomaly = len(r.get('anomalies', [])) > 0
+            is_reviewed = r.get('reviewed', False)
+            is_corrected = r.get('corrected', False)
+
+            # 筛选
+            if filter_mode == 'low_conf' and conf >= 0.6:
+                continue
+            if filter_mode == 'anomaly' and not has_anomaly:
+                continue
+            if filter_mode == 'unreviewed' and is_reviewed:
+                continue
+
             tags = []
-            if r.get('corrected'):
+            if has_anomaly:
+                tags.append('anomaly')
+            elif is_corrected:
                 tags.append('corrected')
+            elif is_reviewed:
+                tags.append('reviewed')
             elif conf < 0.4:
                 tags.append('low_conf')
             elif conf < 0.6:
                 tags.append('med_conf')
 
-            self._tree.insert('', 'end', values=(
-                r.get('file', ''), r['id'], r['type'],
+            # 状态标记
+            status = ''
+            if has_anomaly:
+                status = '⚠️'
+            elif is_corrected:
+                status = '✅'
+            elif is_reviewed:
+                status = '✓'
+
+            self._tree.insert('', 'end', iid=str(idx), values=(
+                r.get('file', ''), r['id'],
+                f"{status} {r['type']}",
                 f"{r['start_time']:.3f}", f"{r['end_time']:.3f}",
                 f"{r['duration_ms']:.1f}", f"{conf:.2f}",
                 f"{r['min_freq_hz']:.0f}", f"{r['max_freq_hz']:.0f}",
             ), tags=tags)
 
-        self._tree.tag_configure('corrected', background='#1a3a1a')  # 绿色=已修正
-        self._tree.tag_configure('low_conf', background='#4a2020')
-        self._tree.tag_configure('med_conf', background='#4a4020')
+        # 颜色配置
+        self._tree.tag_configure('anomaly', background='#4a1010')    # 深红=异常
+        self._tree.tag_configure('corrected', background='#1a3a1a')   # 绿=已修正
+        self._tree.tag_configure('reviewed', background='#1a2a1a')    # 暗绿=已复核
+        self._tree.tag_configure('low_conf', background='#4a2020')    # 红=低置信
+        self._tree.tag_configure('med_conf', background='#4a4020')    # 黄=中置信
+
+        # 更新状态
+        n_anomaly = sum(1 for r in self.results if len(r.get('anomalies', [])) > 0)
+        n_unreviewed = sum(1 for r in self.results if not r.get('reviewed', False))
+        self._filter_lbl.config(text=f'| ⚠️{n_anomaly} ✏️{n_unreviewed}')
 
     # ══════════════════════════════════════════
     #  导出
@@ -1164,6 +1261,25 @@ class DolphinWhistleApp:
                      fg='#ff9800', bg='#141430', font=('Microsoft YaHei', 10, 'bold')).pack(pady=4)
 
         ttk.Button(win, text='OK', command=win.destroy).pack(pady=(4, 12))
+
+
+def _check_anomalies(r: dict) -> list:
+    """检查哨声参数是否超出论文合理范围，返回异常列表"""
+    p = r.get('params', {})
+    anomalies = []
+    for key, (lo, hi) in PAPER_RANGES.items():
+        val = p.get(key)
+        if val is None:
+            continue
+        try:
+            val = float(val)
+        except (ValueError, TypeError):
+            continue
+        if val < lo:
+            anomalies.append(f'{key}={val:.1f} < 论文下限{lo}')
+        elif val > hi:
+            anomalies.append(f'{key}={val:.1f} > 论文上限{hi}')
+    return anomalies
 
 
 def _estimate_snr(freqs):
