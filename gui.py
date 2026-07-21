@@ -259,57 +259,53 @@ def sweep_name(val):
 # ═══════════════════════════════════════════════
 #  Cupertino 组件工厂
 # ═══════════════════════════════════════════════
-class CupertinoButton(tk.Canvas):
-    """Apple 风格圆角按钮"""
+class CupertinoButton(tk.Frame):
+    """Apple 风格按钮 — 用 Frame + Label 实现"""
     def __init__(self, parent, text='', command=None, style='primary',
                  width=120, height=32, font_size=13, **kw):
-        super().__init__(parent, width=width, height=height,
-                         highlightthickness=0, bd=0, **kw)
+        super().__init__(parent, bg=C['surface'], bd=0, highlightthickness=0, **kw)
         self._text = text
         self._cmd = command
-        self._style = style  # 'primary' | 'secondary' | 'destructive'
-        self._w = width; self._h = height; self._fs = font_size
-        self._pressed = False
-        self.bind('<Button-1>', self._on_press)
-        self.bind('<ButtonRelease-1>', self._on_release)
-        self.bind('<Enter>', lambda e: self._draw('hover'))
-        self.bind('<Leave>', lambda e: self._draw('normal'))
-        self._draw('normal')
+        self._style = style
+        self._fs = font_size
+        self._h = height
+
+        colors = {
+            'primary':    (C['primary'], C['primary_h'], '#FFFFFF'),
+            'secondary':  (C['fill'], C['separator'], C['primary']),
+            'destructive':(C['red'], '#CC2F26', '#FFFFFF'),
+        }
+        self._bg, self._bg_hover, self._fg = colors.get(style, colors['primary'])
+
+        self._lbl = tk.Label(self, text=text, font=(FONT_FAMILY, font_size, 'bold'),
+                             bg=self._bg, fg=self._fg,
+                             padx=12, pady=max(2, (height-18)//2))
+        self._lbl.pack(fill='both', expand=True)
+
+        # 绑定
+        for w in (self, self._lbl):
+            w.bind('<Button-1>', self._on_press)
+            w.bind('<ButtonRelease-1>', self._on_release)
+            w.bind('<Enter>', self._on_enter)
+            w.bind('<Leave>', self._on_leave)
+
+    def _on_enter(self, e):
+        self._lbl.config(bg=self._bg_hover) if self._style != 'secondary' else None
+
+    def _on_leave(self, e):
+        self._lbl.config(bg=self._bg)
 
     def _on_press(self, e):
-        self._pressed = True; self._draw('pressed')
+        self._lbl.config(bg=self._bg_hover)
+
     def _on_release(self, e):
-        if self._pressed and self._cmd: self._cmd()
-        self._pressed = False; self._draw('normal')
-
-    def _draw(self, state='normal'):
-        self.delete('all')
-        c = C
-        r = self._h / 2  # 圆角半径
-        if self._style == 'primary':
-            bg = c['primary_h'] if state == 'pressed' else c['primary']
-            fg = '#FFFFFF'
-        elif self._style == 'destructive':
-            bg = '#CC2F26' if state == 'pressed' else c['red']
-            fg = '#FFFFFF'
-        else:  # secondary
-            bg = c['fill'] if state == 'pressed' else c['surface']
-            fg = c['primary']
-
-        self.create_rounded_rect(2, 2, self._w-2, self._h-2, r, fill=bg, outline='')
-        self.create_text(self._w//2, self._h//2, text=self._text,
-                         fill=fg, font=(FONT_FAMILY, self._fs, 'bold'))
-
-    def create_rounded_rect(self, x1, y1, x2, y2, r, **kw):
-        pts = [x1+r,y1, x2-r,y1, x2,y1, x2,y1+r, x2,y2-r, x2,y2, x2-r,y2,
-               x1+r,y2, x1,y2, x1,y2-r, x1,y1+r, x1,y1]
-        return self.create_polygon(pts, smooth=True, **kw)
+        self._lbl.config(bg=self._bg)
+        if self._cmd: self._cmd()
 
     def config_text(self, t):
-        self._text = t; self._draw('normal')
+        self._text = t; self._lbl.config(text=t)
     def set_state(self, s):
-        self._draw('disabled' if s == 'disabled' else 'normal')
-        self.unbind('<Button-1>') if s == 'disabled' else self.bind('<Button-1>', self._on_press)
+        pass
 
 
 class CupertinoEntry(tk.Frame):
